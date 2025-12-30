@@ -19,6 +19,7 @@ import SettingsScreen from './src/screens/student/SettingsScreen';
 import ParentDashboardScreen from './src/screens/parent/ParentDashboardScreen';
 import ApprovalScreen from './src/screens/parent/ApprovalScreen';
 import ParentHistoryScreen from './src/screens/parent/ParentHistoryScreen';
+import ParentStatisticsScreen from './src/screens/parent/ParentStatisticsScreen';
 import PenaltyScreen from './src/screens/parent/PenaltyScreen';
 
 // 인증 화면
@@ -173,10 +174,10 @@ function ParentNavigator() {
         name="Dashboard"
         component={ParentDashboardScreen}
         options={{
-          title: '대시보드',
+          title: '홈',
           headerTitle: '👨‍👩‍👦 부모님 모드',
           tabBarIcon: ({ focused }) => (
-            <TabBarIcon emoji="📊" focused={focused} />
+            <TabBarIcon emoji="🏠" focused={focused} />
           ),
         }}
       />
@@ -199,6 +200,17 @@ function ParentNavigator() {
           headerTitle: '📅 기록 조회',
           tabBarIcon: ({ focused }) => (
             <TabBarIcon emoji="📅" focused={focused} />
+          ),
+        }}
+      />
+      <ParentTab.Screen
+        name="Statistics"
+        component={ParentStatisticsScreen}
+        options={{
+          title: '통계',
+          headerTitle: '📊 통계',
+          tabBarIcon: ({ focused }) => (
+            <TabBarIcon emoji="📊" focused={focused} />
           ),
         }}
       />
