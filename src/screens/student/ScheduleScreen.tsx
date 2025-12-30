@@ -34,12 +34,15 @@ function showConfirm(title: string, message: string, onConfirm: () => void, conf
   }
 }
 import { useSchedules } from '../../contexts/ScheduleContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { Schedule, DayOfWeek, DAY_NAMES, minutesToTimeString } from '../../types';
 import { COLORS, SHADOWS, SPACING, BORDER_RADIUS, FONT_SIZES } from '../../constants/theme';
 
 const EMOJI_OPTIONS = ['📚', '✏️', '🎹', '🎨', '⚽', '🏊', '🥋', '💻', '🇬🇧', '🧮'];
 
 export default function ScheduleScreen() {
+  const { user } = useAuth();
+  const isParent = user?.role === 'parent';
   const {
     schedules,
     addSchedule,
@@ -251,8 +254,9 @@ export default function ScheduleScreen() {
           <View style={styles.infoCard}>
             <Text style={styles.infoEmoji}>💡</Text>
             <Text style={styles.infoText}>
-              학원이나 과외 스케줄을 미리 등록해두면{'\n'}
-              홈 화면에서 바로 기록할 수 있어요!
+              {isParent
+                ? '학원이나 과외 스케줄을 미리 등록해두면\n홈 화면에서 바로 기록할 수 있어요!'
+                : '부모님이 스케줄을 등록해주시면\n홈 화면에서 바로 기록할 수 있어요!'}
             </Text>
           </View>
         )}
@@ -260,13 +264,15 @@ export default function ScheduleScreen() {
         {/* 스케줄 목록 */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📋 내 스케줄</Text>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={openAddModal}
-            >
-              <Text style={styles.addButtonText}>+ 추가</Text>
-            </TouchableOpacity>
+            <Text style={styles.sectionTitle}>📋 {isParent ? '자녀' : '내'} 스케줄</Text>
+            {isParent && (
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={openAddModal}
+              >
+                <Text style={styles.addButtonText}>+ 추가</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {sortedSchedules.length === 0 ? (
@@ -274,7 +280,9 @@ export default function ScheduleScreen() {
               <Text style={styles.emptyEmoji}>📭</Text>
               <Text style={styles.emptyText}>등록된 스케줄이 없어요</Text>
               <Text style={styles.emptySubtext}>
-                + 추가 버튼을 눌러 학원이나 과외를 등록해보세요
+                {isParent
+                  ? '+ 추가 버튼을 눌러 학원이나 과외를 등록해보세요'
+                  : '부모님이 스케줄을 등록해주실 거예요'}
               </Text>
             </View>
           ) : (
@@ -282,8 +290,9 @@ export default function ScheduleScreen() {
               <TouchableOpacity
                 key={schedule.id}
                 style={styles.scheduleCard}
-                onPress={() => openEditModal(schedule)}
-                activeOpacity={0.7}
+                onPress={() => isParent && openEditModal(schedule)}
+                activeOpacity={isParent ? 0.7 : 1}
+                disabled={!isParent}
               >
                 <View style={styles.scheduleMain}>
                   <Text style={styles.scheduleEmoji}>{schedule.emoji}</Text>
@@ -312,12 +321,14 @@ export default function ScheduleScreen() {
                     </View>
                   </View>
                 </View>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() => handleDelete(schedule)}
-                >
-                  <Text style={styles.deleteButtonText}>🗑️</Text>
-                </TouchableOpacity>
+                {isParent && (
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => handleDelete(schedule)}
+                  >
+                    <Text style={styles.deleteButtonText}>🗑️</Text>
+                  </TouchableOpacity>
+                )}
               </TouchableOpacity>
             ))
           )}

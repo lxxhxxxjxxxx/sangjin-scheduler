@@ -12,6 +12,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -28,6 +29,7 @@ function showAlert(title: string, message?: string) {
 }
 
 export default function ParentDashboardScreen() {
+  const navigation = useNavigation<any>();
   const { user, linkToStudent, logout, error, clearError } = useAuth();
   const [studentInfo, setStudentInfo] = useState<{ id: string; name: string } | null>(null);
   const [balance, setBalance] = useState<number>(0);
@@ -305,7 +307,10 @@ export default function ParentDashboardScreen() {
 
         {/* 승인 대기 알림 */}
         {pendingCount > 0 && (
-          <TouchableOpacity style={styles.pendingCard}>
+          <TouchableOpacity
+            style={styles.pendingCard}
+            onPress={() => navigation.navigate('Approval')}
+          >
             <View style={styles.pendingBadge}>
               <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
             </View>
@@ -354,7 +359,9 @@ export default function ParentDashboardScreen() {
               const config = getActivityConfig(activity.category);
               const isEarn = activity.type === 'earn';
               const isPending = activity.needsApproval && activity.status === 'pending';
-              
+              const isApproved = activity.needsApproval && activity.status === 'approved';
+              const isRejected = activity.needsApproval && activity.status === 'rejected';
+
               return (
                 <View
                   key={activity.id}
@@ -376,9 +383,16 @@ export default function ParentDashboardScreen() {
                         {activity.startTime} - {activity.endTime}
                       </Text>
                     )}
-                    {isPending && (
-                      <View style={styles.pendingBadgeSmall}>
-                        <Text style={styles.pendingBadgeSmallText}>⏳ 승인 대기</Text>
+                    {activity.needsApproval && (
+                      <View style={[
+                        styles.approvalBadgeSmall,
+                        isPending && styles.approvalBadgePending,
+                        isApproved && styles.approvalBadgeApproved,
+                        isRejected && styles.approvalBadgeRejected,
+                      ]}>
+                        <Text style={styles.approvalBadgeSmallText}>
+                          {isPending ? '⏳ 승인 대기' : isApproved ? '✅ 승인됨' : '❌ 거절됨'}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -747,15 +761,23 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.md,
     fontWeight: 'bold',
   },
-  pendingBadgeSmall: {
-    backgroundColor: COLORS.gold,
+  approvalBadgeSmall: {
     paddingHorizontal: SPACING.sm,
     paddingVertical: 2,
     borderRadius: BORDER_RADIUS.full,
     alignSelf: 'flex-start',
     marginTop: 4,
   },
-  pendingBadgeSmallText: {
+  approvalBadgePending: {
+    backgroundColor: COLORS.gold,
+  },
+  approvalBadgeApproved: {
+    backgroundColor: COLORS.earn,
+  },
+  approvalBadgeRejected: {
+    backgroundColor: COLORS.penalty,
+  },
+  approvalBadgeSmallText: {
     fontSize: 10,
     color: COLORS.textWhite,
     fontWeight: '600',

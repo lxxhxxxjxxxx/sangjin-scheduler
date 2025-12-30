@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import {
   collection,
@@ -14,32 +15,55 @@ import {
   orderBy,
   onSnapshot,
 } from 'firebase/firestore';
+import { Calendar } from 'react-native-calendars';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Activity, minutesToTimeString } from '../../types';
+import { getActivityConfig } from '../../constants/activities';
 import { COLORS, SHADOWS, SPACING, BORDER_RADIUS, FONT_SIZES } from '../../constants/theme';
 
-type PeriodType = 'week' | 'month';
+type PeriodType = 'week' | 'month' | 'custom';
 
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 
 export default function ParentStatisticsScreen() {
   const { user } = useAuth();
+  const isParent = user?.role === 'parent';
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<PeriodType>('week');
 
+  // 커스텀 기간 선택
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [selectingDate, setSelectingDate] = useState<'start' | 'end'>('start');
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 6);
+    return date.toISOString().split('T')[0];
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+
   // 활동 데이터 구독
   React.useEffect(() => {
-    if (!user?.linkedFamilyCode) {
+    if (!user) {
       setLoading(false);
       return;
     }
 
+    // 부모는 linkedFamilyCode로, 학생은 familyCode로 조회 (동일한 데이터 공유)
     const activitiesRef = collection(db, 'activities');
+    const familyCodeToUse = isParent ? user.linkedFamilyCode : user.familyCode;
+
+    if (!familyCodeToUse) {
+      setLoading(false);
+      return;
+    }
+
     const activitiesQuery = query(
       activitiesRef,
-      where('familyCode', '==', user.linkedFamilyCode),
+      where('familyCode', '==', familyCodeToUse),
       where('status', '==', 'approved'),
       orderBy('date', 'desc')
     );
@@ -60,10 +84,18 @@ export default function ParentStatisticsScreen() {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, isParent]);
 
   // 기간 계산
   const dateRange = useMemo(() => {
+    if (period === 'custom') {
+      const start = new Date(customStartDate);
+      const end = new Date(customEndDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+    }
+
     const end = new Date();
     const start = new Date();
     if (period === 'week') {
@@ -74,7 +106,14 @@ export default function ParentStatisticsScreen() {
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
     return { start, end };
-  }, [period]);
+  }, [period, customStartDate, customEndDate]);
+
+  // 커스텀 기간의 일수 계산
+  const customDays = useMemo(() => {
+    if (period !== 'custom') return 0;
+    const diffTime = Math.abs(new Date(customEndDate).getTime() - new Date(customStartDate).getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+  }, [period, customStartDate, customEndDate]);
 
   // 기간 내 활동 필터
   const filteredActivities = useMemo(() => {
@@ -86,12 +125,17 @@ export default function ParentStatisticsScreen() {
 
   // 일별 통계 계산
   const dailyStats = useMemo(() => {
-    const days = period === 'week' ? 7 : 30;
+    const days = period === 'week' ? 7 : period === 'month' ? 30 : customDays;
     const stats: { date: Date; earned: number; spent: number; penalty: number }[] = [];
 
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
+    const startDate = period === 'custom' ? new Date(customStartDate) : new Date();
+    if (period !== 'custom') {
+      startDate.setDate(startDate.getDate() - (days - 1));
+    }
+
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
       date.setHours(0, 0, 0, 0);
 
       const dayActivities = filteredActivities.filter(a => {
@@ -114,7 +158,7 @@ export default function ParentStatisticsScreen() {
     }
 
     return stats;
-  }, [filteredActivities, period]);
+  }, [filteredActivities, period, customDays, customStartDate]);
 
   // 요일별 통계
   const weekdayStats = useMemo(() => {
@@ -152,19 +196,57 @@ export default function ParentStatisticsScreen() {
       .sort((a, b) => b.minutes - a.minutes);
   }, [filteredActivities]);
 
+  // 과목별 일별 추이 (최근 7일)
+  const subjectDailyTrend = useMemo(() => {
+    // 상위 5개 과목만 추출
+    const topSubjects = subjectStats.slice(0, 5).map(s => s.name);
+    if (topSubjects.length === 0) return [];
+
+    const days = Math.min(period === 'week' ? 7 : period === 'month' ? 14 : Math.min(customDays, 14), 14);
+    const startDate = period === 'custom' ? new Date(customStartDate) : new Date();
+    if (period !== 'custom') {
+      startDate.setDate(startDate.getDate() - (days - 1));
+    }
+
+    const trend: { date: Date; subjects: { [key: string]: number } }[] = [];
+
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+      date.setHours(0, 0, 0, 0);
+
+      const dayData: { [key: string]: number } = {};
+      topSubjects.forEach(subject => {
+        dayData[subject] = 0;
+      });
+
+      filteredActivities
+        .filter(a => a.subject && topSubjects.includes(a.subject))
+        .forEach(a => {
+          const aDate = new Date(a.date);
+          if (aDate.toDateString() === date.toDateString()) {
+            dayData[a.subject!] = (dayData[a.subject!] || 0) + a.durationMinutes;
+          }
+        });
+
+      trend.push({ date, subjects: dayData });
+    }
+
+    return trend;
+  }, [filteredActivities, subjectStats, period, customDays, customStartDate]);
+
+  // 과목 색상 생성
+  const subjectColors = useMemo(() => {
+    const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+    const colorMap: { [key: string]: string } = {};
+    subjectStats.forEach((stat, index) => {
+      colorMap[stat.name] = colors[index % colors.length];
+    });
+    return colorMap;
+  }, [subjectStats]);
+
   // 카테고리별 통계
   const categoryStats = useMemo(() => {
-    const categoryLabels: { [key: string]: { label: string; emoji: string } } = {
-      academy: { label: '학원/과외', emoji: '🏫' },
-      homework: { label: '숙제', emoji: '📝' },
-      self_study: { label: '스스로 공부', emoji: '📖' },
-      reading: { label: '독서', emoji: '📚' },
-      good_deed: { label: '좋은 일', emoji: '💝' },
-      coding: { label: '코딩/AI', emoji: '💻' },
-      game: { label: '게임', emoji: '🎮' },
-      youtube: { label: '유튜브', emoji: '📺' },
-    };
-
     const stats: { [key: string]: number } = {};
 
     filteredActivities.forEach(a => {
@@ -174,14 +256,17 @@ export default function ParentStatisticsScreen() {
     });
 
     return Object.entries(stats)
-      .map(([category, minutes]) => ({
-        category,
-        label: categoryLabels[category]?.label || category,
-        emoji: categoryLabels[category]?.emoji || '📌',
-        minutes,
-      }))
+      .map(([category, minutes]) => {
+        const config = getActivityConfig(category as any);
+        return {
+          category,
+          label: config?.label || category,
+          emoji: config?.emoji || '📌',
+          minutes,
+        };
+      })
       .sort((a, b) => b.minutes - a.minutes)
-      .slice(0, 6);
+      .slice(0, 8);
   }, [filteredActivities]);
 
   // 총계
@@ -208,12 +293,18 @@ export default function ParentStatisticsScreen() {
     return Math.max(...weekdayStats.map(d => d.earned), 60);
   }, [weekdayStats]);
 
-  if (!user?.linkedFamilyCode) {
+  const familyCodeToUse = isParent ? user?.linkedFamilyCode : user?.familyCode;
+
+  if (!familyCodeToUse) {
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyEmoji}>🔗</Text>
-        <Text style={styles.emptyText}>연결된 학생이 없습니다</Text>
-        <Text style={styles.emptySubtext}>설정에서 가족 코드를 입력해주세요</Text>
+        <Text style={styles.emptyText}>
+          {isParent ? '연결된 학생이 없습니다' : '가족 코드가 없습니다'}
+        </Text>
+        <Text style={styles.emptySubtext}>
+          {isParent ? '설정에서 가족 코드를 입력해주세요' : '설정에서 가족 코드를 확인해주세요'}
+        </Text>
       </View>
     );
   }
@@ -235,7 +326,7 @@ export default function ParentStatisticsScreen() {
           onPress={() => setPeriod('week')}
         >
           <Text style={[styles.periodButtonText, period === 'week' && styles.periodButtonTextActive]}>
-            최근 7일
+            7일
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -243,10 +334,45 @@ export default function ParentStatisticsScreen() {
           onPress={() => setPeriod('month')}
         >
           <Text style={[styles.periodButtonText, period === 'month' && styles.periodButtonTextActive]}>
-            최근 30일
+            30일
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.periodButton, period === 'custom' && styles.periodButtonActive]}
+          onPress={() => setPeriod('custom')}
+        >
+          <Text style={[styles.periodButtonText, period === 'custom' && styles.periodButtonTextActive]}>
+            기간 선택
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* 커스텀 기간 표시 및 선택 */}
+      {period === 'custom' && (
+        <View style={styles.customDateContainer}>
+          <TouchableOpacity
+            style={styles.datePickerButton}
+            onPress={() => {
+              setSelectingDate('start');
+              setShowDateModal(true);
+            }}
+          >
+            <Text style={styles.datePickerLabel}>시작일</Text>
+            <Text style={styles.datePickerValue}>{customStartDate}</Text>
+          </TouchableOpacity>
+          <Text style={styles.dateSeparator}>~</Text>
+          <TouchableOpacity
+            style={styles.datePickerButton}
+            onPress={() => {
+              setSelectingDate('end');
+              setShowDateModal(true);
+            }}
+          >
+            <Text style={styles.datePickerLabel}>종료일</Text>
+            <Text style={styles.datePickerValue}>{customEndDate}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* 총계 카드 */}
       <View style={styles.totalsCard}>
@@ -318,6 +444,9 @@ export default function ParentStatisticsScreen() {
                       ? DAY_NAMES[day.date.getDay()]
                       : `${day.date.getMonth() + 1}/${day.date.getDate()}`}
                   </Text>
+                  {period === 'custom' && customDays <= 14 && (
+                    <Text style={styles.barLabelDay}>{DAY_NAMES[day.date.getDay()]}</Text>
+                  )}
                 </View>
               ))}
             </View>
@@ -356,26 +485,108 @@ export default function ParentStatisticsScreen() {
       {/* 과목별 통계 */}
       {subjectStats.length > 0 && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📚 과목별 공부 시간</Text>
+          <Text style={styles.sectionTitle}>📚 과목별 공부 시간 순위</Text>
+
+          {/* 순위 카드 */}
+          <View style={styles.subjectRankContainer}>
+            {subjectStats.slice(0, 3).map((stat, index) => {
+              const medals = ['🥇', '🥈', '🥉'];
+              const totalMinutes = subjectStats.reduce((sum, s) => sum + s.minutes, 0);
+              const percentage = totalMinutes > 0 ? Math.round((stat.minutes / totalMinutes) * 100) : 0;
+              return (
+                <View key={index} style={[styles.subjectRankCard, index === 0 && styles.subjectRankCardFirst]}>
+                  <Text style={styles.subjectRankMedal}>{medals[index]}</Text>
+                  <Text style={[styles.subjectRankName, index === 0 && styles.subjectRankNameFirst]} numberOfLines={1}>
+                    {stat.name}
+                  </Text>
+                  <Text style={[styles.subjectRankTime, { color: subjectColors[stat.name] }]}>
+                    {minutesToTimeString(stat.minutes)}
+                  </Text>
+                  <Text style={styles.subjectRankPercent}>{percentage}%</Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* 전체 과목 리스트 */}
           <View style={styles.subjectList}>
             {subjectStats.map((stat, index) => {
               const maxMinutes = subjectStats[0]?.minutes || 1;
               const percentage = (stat.minutes / maxMinutes) * 100;
               return (
                 <View key={index} style={styles.subjectItem}>
+                  <View style={[styles.subjectColorDot, { backgroundColor: subjectColors[stat.name] }]} />
                   <View style={styles.subjectInfo}>
                     <Text style={styles.subjectName}>{stat.name}</Text>
                     <Text style={styles.subjectTime}>{minutesToTimeString(stat.minutes)}</Text>
                   </View>
                   <View style={styles.subjectBarContainer}>
                     <View
-                      style={[styles.subjectBarFill, { width: `${percentage}%` }]}
+                      style={[styles.subjectBarFill, { width: `${percentage}%`, backgroundColor: subjectColors[stat.name] }]}
                     />
                   </View>
                 </View>
               );
             })}
           </View>
+        </View>
+      )}
+
+      {/* 과목별 일일 추이 */}
+      {subjectDailyTrend.length > 0 && subjectStats.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>📈 과목별 일일 추이</Text>
+
+          {/* 범례 */}
+          <View style={styles.subjectLegend}>
+            {subjectStats.slice(0, 5).map((stat, index) => (
+              <View key={index} style={styles.subjectLegendItem}>
+                <View style={[styles.subjectLegendDot, { backgroundColor: subjectColors[stat.name] }]} />
+                <Text style={styles.subjectLegendText} numberOfLines={1}>{stat.name}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* 추이 차트 */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={styles.subjectTrendChart}>
+              {subjectDailyTrend.map((day, dayIndex) => {
+                const totalMinutes = Object.values(day.subjects).reduce((sum, m) => sum + m, 0);
+                const maxTotalMinutes = Math.max(...subjectDailyTrend.map(d =>
+                  Object.values(d.subjects).reduce((sum, m) => sum + m, 0)
+                ), 60);
+
+                return (
+                  <View key={dayIndex} style={styles.subjectTrendDay}>
+                    <View style={styles.subjectTrendBarContainer}>
+                      {subjectStats.slice(0, 5).map((stat, statIndex) => {
+                        const minutes = day.subjects[stat.name] || 0;
+                        const height = maxTotalMinutes > 0 ? (minutes / maxTotalMinutes) * 80 : 0;
+                        return (
+                          <View
+                            key={statIndex}
+                            style={[
+                              styles.subjectTrendBarSegment,
+                              {
+                                height: Math.max(height, minutes > 0 ? 4 : 0),
+                                backgroundColor: subjectColors[stat.name],
+                              }
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                    <Text style={styles.subjectTrendLabel}>
+                      {day.date.getMonth() + 1}/{day.date.getDate()}
+                    </Text>
+                    {totalMinutes > 0 && (
+                      <Text style={styles.subjectTrendValue}>{Math.round(totalMinutes)}분</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
         </View>
       )}
 
@@ -397,6 +608,63 @@ export default function ParentStatisticsScreen() {
       </View>
 
       <View style={{ height: SPACING.xxl }} />
+
+      {/* 날짜 선택 모달 */}
+      <Modal
+        visible={showDateModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDateModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowDateModal(false)}
+        >
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modalTitle}>
+              📅 {selectingDate === 'start' ? '시작일' : '종료일'} 선택
+            </Text>
+            <Calendar
+              current={selectingDate === 'start' ? customStartDate : customEndDate}
+              maxDate={selectingDate === 'start' ? customEndDate : new Date().toISOString().split('T')[0]}
+              minDate={selectingDate === 'end' ? customStartDate : undefined}
+              onDayPress={(day: { dateString: string }) => {
+                if (selectingDate === 'start') {
+                  setCustomStartDate(day.dateString);
+                } else {
+                  setCustomEndDate(day.dateString);
+                }
+                setShowDateModal(false);
+              }}
+              markedDates={{
+                [selectingDate === 'start' ? customStartDate : customEndDate]: {
+                  selected: true,
+                  selectedColor: COLORS.primary,
+                },
+              }}
+              theme={{
+                backgroundColor: COLORS.card,
+                calendarBackground: COLORS.card,
+                textSectionTitleColor: COLORS.textSecondary,
+                selectedDayBackgroundColor: COLORS.primary,
+                selectedDayTextColor: COLORS.textWhite,
+                todayTextColor: COLORS.primary,
+                dayTextColor: COLORS.textPrimary,
+                textDisabledColor: COLORS.textLight,
+                monthTextColor: COLORS.textPrimary,
+                arrowColor: COLORS.primary,
+              }}
+            />
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => setShowDateModal(false)}
+            >
+              <Text style={styles.modalCloseText}>닫기</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </ScrollView>
   );
 }
@@ -571,6 +839,10 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 4,
   },
+  barLabelDay: {
+    fontSize: 8,
+    color: COLORS.textLight,
+  },
 
   // 요일별 차트
   weekdayChart: {
@@ -611,14 +883,61 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // 과목별
+  // 과목별 순위
+  subjectRankContainer: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
+  subjectRankCard: {
+    flex: 1,
+    backgroundColor: COLORS.cardAlt,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.md,
+    alignItems: 'center',
+  },
+  subjectRankCardFirst: {
+    backgroundColor: COLORS.goldLight,
+  },
+  subjectRankMedal: {
+    fontSize: 28,
+    marginBottom: SPACING.xs,
+  },
+  subjectRankName: {
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+  },
+  subjectRankNameFirst: {
+    color: COLORS.goldDark,
+  },
+  subjectRankTime: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: 'bold',
+    marginTop: SPACING.xs,
+  },
+  subjectRankPercent: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textSecondary,
+  },
+
+  // 과목별 리스트
   subjectList: {
     gap: SPACING.md,
   },
   subjectItem: {
-    gap: SPACING.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  subjectColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
   subjectInfo: {
+    flex: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -633,15 +952,72 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   subjectBarContainer: {
+    flex: 1,
     height: 8,
     backgroundColor: COLORS.cardAlt,
     borderRadius: 4,
     overflow: 'hidden',
+    marginLeft: SPACING.sm,
   },
   subjectBarFill: {
     height: '100%',
     backgroundColor: COLORS.earn,
     borderRadius: 4,
+  },
+
+  // 과목별 범례
+  subjectLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+  },
+  subjectLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  subjectLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  subjectLegendText: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textSecondary,
+    maxWidth: 60,
+  },
+
+  // 과목별 추이 차트
+  subjectTrendChart: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 120,
+    gap: SPACING.xs,
+    paddingTop: SPACING.sm,
+  },
+  subjectTrendDay: {
+    alignItems: 'center',
+    width: 40,
+  },
+  subjectTrendBarContainer: {
+    width: 24,
+    height: 80,
+    justifyContent: 'flex-end',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  subjectTrendBarSegment: {
+    width: '100%',
+  },
+  subjectTrendLabel: {
+    fontSize: 9,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+  },
+  subjectTrendValue: {
+    fontSize: 8,
+    color: COLORS.textLight,
   },
 
   // 카테고리별
@@ -677,5 +1053,74 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontSize: FONT_SIZES.md,
     paddingVertical: SPACING.lg,
+  },
+
+  // 커스텀 날짜 선택
+  customDateContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    gap: SPACING.sm,
+  },
+  datePickerButton: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.lg,
+    alignItems: 'center',
+    ...SHADOWS.small,
+  },
+  datePickerLabel: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  datePickerValue: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: 'bold',
+    color: COLORS.primary,
+  },
+  dateSeparator: {
+    fontSize: FONT_SIZES.lg,
+    color: COLORS.textSecondary,
+    fontWeight: 'bold',
+  },
+
+  // 모달
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  modalContent: {
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.xl,
+    padding: SPACING.lg,
+    width: '100%',
+    maxWidth: 360,
+    ...SHADOWS.large,
+  },
+  modalTitle: {
+    fontSize: FONT_SIZES.lg,
+    fontWeight: 'bold',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+  },
+  modalCloseButton: {
+    backgroundColor: COLORS.cardAlt,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    alignItems: 'center',
+    marginTop: SPACING.md,
+  },
+  modalCloseText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
   },
 });

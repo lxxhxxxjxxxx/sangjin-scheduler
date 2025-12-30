@@ -19,12 +19,13 @@ import {
   doc,
   updateDoc,
   getDoc,
+  addDoc,
   orderBy,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Activity, minutesToTimeString } from '../../types';
-import { getActivityConfig } from '../../constants/activities';
+import { Activity, minutesToTimeString, PenaltyCategory } from '../../types';
+import { getActivityConfig, PENALTY_ACTIVITIES } from '../../constants/activities';
 import { COLORS, SHADOWS, SPACING, BORDER_RADIUS, FONT_SIZES } from '../../constants/theme';
 
 function showAlert(title: string, message?: string) {
@@ -45,6 +46,11 @@ export default function ApprovalScreen() {
   const [rejectingActivity, setRejectingActivity] = useState<Activity | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [studentId, setStudentId] = useState<string | null>(null);
+
+  // 벌금 관련 상태
+  const [selectedPenalty, setSelectedPenalty] = useState<PenaltyCategory | null>(null);
+  const [penaltyDescription, setPenaltyDescription] = useState('');
+  const [penaltyProcessing, setPenaltyProcessing] = useState(false);
 
   useEffect(() => {
     if (!user?.linkedFamilyCode) return;
@@ -157,6 +163,52 @@ export default function ApprovalScreen() {
     return month + '/' + day + ' (' + weekday + ')';
   }
 
+  async function handleAddPenalty() {
+    if (!selectedPenalty || !studentId || !user?.linkedFamilyCode) return;
+    const penaltyConfig = PENALTY_ACTIVITIES.find((p) => p.category === selectedPenalty);
+    if (!penaltyConfig || !penaltyConfig.fixedMinutes) return;
+
+    const penaltyMinutes = penaltyConfig.fixedMinutes;
+
+    setPenaltyProcessing(true);
+    try {
+      const now = new Date();
+      await addDoc(collection(db, 'activities'), {
+        userId: studentId,
+        familyCode: user.linkedFamilyCode,
+        date: now,
+        type: 'penalty',
+        category: selectedPenalty,
+        durationMinutes: penaltyMinutes,
+        multiplier: 1,
+        earnedMinutes: -penaltyMinutes,
+        needsApproval: false,
+        status: 'approved',
+        approvedBy: user.id,
+        approvedAt: now,
+        description: penaltyDescription || null,
+        createdAt: now,
+      });
+
+      const balanceRef = doc(db, 'balances', studentId);
+      const balanceDoc = await getDoc(balanceRef);
+      const currentBalance = balanceDoc.exists() ? balanceDoc.data().currentBalance : 0;
+      await updateDoc(balanceRef, {
+        currentBalance: currentBalance - penaltyMinutes,
+        lastUpdated: now,
+      });
+
+      showAlert('벌금 부과 완료!', minutesToTimeString(penaltyMinutes) + '이 차감되었어요');
+      setSelectedPenalty(null);
+      setPenaltyDescription('');
+    } catch (err) {
+      console.error('Penalty error:', err);
+      showAlert('오류', '벌금 부과 중 오류가 발생했습니다');
+    } finally {
+      setPenaltyProcessing(false);
+    }
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -242,6 +294,56 @@ export default function ApprovalScreen() {
             );
           })
         )}
+        {/* 벌금 부과 섹션 */}
+        <View style={styles.penaltySection}>
+          <Text style={styles.penaltySectionTitle}>⚡ 벌금 부과</Text>
+          <Text style={styles.penaltySectionDesc}>규칙 위반 시 시간을 차감해요</Text>
+
+          <View style={styles.penaltyGrid}>
+            {PENALTY_ACTIVITIES.map((penalty) => {
+              const isSelected = selectedPenalty === penalty.category;
+              return (
+                <TouchableOpacity
+                  key={penalty.category}
+                  style={[styles.penaltyCard, isSelected && styles.penaltyCardSelected]}
+                  onPress={() => setSelectedPenalty(isSelected ? null : penalty.category)}
+                >
+                  <Text style={styles.penaltyEmoji}>{penalty.emoji}</Text>
+                  <Text style={[styles.penaltyLabel, isSelected && styles.penaltyLabelSelected]}>
+                    {penalty.label}
+                  </Text>
+                  <Text style={styles.penaltyAmount}>
+                    -{minutesToTimeString(penalty.fixedMinutes || 0)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {selectedPenalty && (
+            <View style={styles.penaltyForm}>
+              <TextInput
+                style={styles.penaltyInput}
+                value={penaltyDescription}
+                onChangeText={setPenaltyDescription}
+                placeholder="사유 입력 (선택)"
+                placeholderTextColor={COLORS.textLight}
+              />
+              <TouchableOpacity
+                style={[styles.penaltyButton, penaltyProcessing && styles.buttonDisabled]}
+                onPress={handleAddPenalty}
+                disabled={penaltyProcessing}
+              >
+                {penaltyProcessing ? (
+                  <ActivityIndicator size="small" color={COLORS.textWhite} />
+                ) : (
+                  <Text style={styles.penaltyButtonText}>벌금 부과하기</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
 
@@ -330,4 +432,19 @@ const styles = StyleSheet.create({
   modalCancelText: { color: COLORS.textSecondary, fontSize: FONT_SIZES.md, fontWeight: '600' },
   modalRejectButton: { flex: 1, backgroundColor: COLORS.penalty, borderRadius: BORDER_RADIUS.md, padding: SPACING.md, alignItems: 'center' },
   modalRejectText: { color: COLORS.textWhite, fontSize: FONT_SIZES.md, fontWeight: 'bold' },
+  // 벌금 섹션 스타일
+  penaltySection: { backgroundColor: COLORS.card, marginHorizontal: SPACING.md, marginTop: SPACING.lg, borderRadius: BORDER_RADIUS.xl, padding: SPACING.lg, ...SHADOWS.medium },
+  penaltySectionTitle: { fontSize: FONT_SIZES.xl, fontWeight: 'bold', color: COLORS.textPrimary },
+  penaltySectionDesc: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginTop: SPACING.xs, marginBottom: SPACING.lg },
+  penaltyGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
+  penaltyCard: { width: '48%', backgroundColor: COLORS.cardAlt, borderRadius: BORDER_RADIUS.lg, padding: SPACING.md, alignItems: 'center', borderWidth: 2, borderColor: 'transparent' },
+  penaltyCardSelected: { borderColor: COLORS.penalty, backgroundColor: COLORS.penalty + '15' },
+  penaltyEmoji: { fontSize: 32, marginBottom: SPACING.xs },
+  penaltyLabel: { fontSize: FONT_SIZES.sm, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center' },
+  penaltyLabelSelected: { color: COLORS.penalty },
+  penaltyAmount: { fontSize: FONT_SIZES.lg, fontWeight: 'bold', color: COLORS.penalty, marginTop: SPACING.xs },
+  penaltyForm: { marginTop: SPACING.lg },
+  penaltyInput: { backgroundColor: COLORS.cardAlt, borderRadius: BORDER_RADIUS.md, padding: SPACING.md, fontSize: FONT_SIZES.md, color: COLORS.textPrimary, marginBottom: SPACING.md },
+  penaltyButton: { backgroundColor: COLORS.penalty, borderRadius: BORDER_RADIUS.md, padding: SPACING.md, alignItems: 'center', ...SHADOWS.small },
+  penaltyButtonText: { color: COLORS.textWhite, fontSize: FONT_SIZES.md, fontWeight: 'bold' },
 });

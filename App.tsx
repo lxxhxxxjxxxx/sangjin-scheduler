@@ -20,7 +20,6 @@ import ParentDashboardScreen from './src/screens/parent/ParentDashboardScreen';
 import ApprovalScreen from './src/screens/parent/ApprovalScreen';
 import ParentHistoryScreen from './src/screens/parent/ParentHistoryScreen';
 import ParentStatisticsScreen from './src/screens/parent/ParentStatisticsScreen';
-import PenaltyScreen from './src/screens/parent/PenaltyScreen';
 
 // 인증 화면
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -109,11 +108,22 @@ function StudentNavigator() {
             }}
           />
           <StudentTab.Screen
+            name="Statistics"
+            component={ParentStatisticsScreen}
+            options={{
+              title: '통계',
+              headerTitle: '📊 통계',
+              tabBarIcon: ({ focused }) => (
+                <TabBarIcon emoji="📊" focused={focused} />
+              ),
+            }}
+          />
+          <StudentTab.Screen
             name="Schedule"
             component={ScheduleScreen}
             options={{
               title: '스케줄',
-              headerTitle: '🗓️ 스케줄 설정',
+              headerTitle: '🗓️ 스케줄 보기',
               tabBarIcon: ({ focused }) => (
                 <TabBarIcon emoji="🗓️" focused={focused} />
               ),
@@ -140,6 +150,8 @@ function StudentNavigator() {
 // 부모용 탭 네비게이터
 function ParentNavigator() {
   return (
+    <SubjectProvider>
+    <ScheduleProvider>
     <ParentTab.Navigator
       screenOptions={{
         tabBarActiveTintColor: COLORS.primary,
@@ -185,10 +197,10 @@ function ParentNavigator() {
         name="Approval"
         component={ApprovalScreen}
         options={{
-          title: '승인',
-          headerTitle: '⏳ 승인 대기',
+          title: '관리',
+          headerTitle: '✅ 승인 / 벌금',
           tabBarIcon: ({ focused }) => (
-            <TabBarIcon emoji="✅" focused={focused} />
+            <TabBarIcon emoji="✏️" focused={focused} />
           ),
         }}
       />
@@ -196,8 +208,8 @@ function ParentNavigator() {
         name="History"
         component={ParentHistoryScreen}
         options={{
-          title: '기록',
-          headerTitle: '📅 기록 조회',
+          title: '히스토리',
+          headerTitle: '📅 히스토리',
           tabBarIcon: ({ focused }) => (
             <TabBarIcon emoji="📅" focused={focused} />
           ),
@@ -215,13 +227,13 @@ function ParentNavigator() {
         }}
       />
       <ParentTab.Screen
-        name="Penalty"
-        component={PenaltyScreen}
+        name="Schedule"
+        component={ScheduleScreen}
         options={{
-          title: '벌금',
-          headerTitle: '⚠️ 벌금 부과',
+          title: '스케줄',
+          headerTitle: '🗓️ 스케줄 관리',
           tabBarIcon: ({ focused }) => (
-            <TabBarIcon emoji="⚠️" focused={focused} />
+            <TabBarIcon emoji="🗓️" focused={focused} />
           ),
         }}
       />
@@ -237,6 +249,8 @@ function ParentNavigator() {
         }}
       />
     </ParentTab.Navigator>
+    </ScheduleProvider>
+    </SubjectProvider>
   );
 }
 

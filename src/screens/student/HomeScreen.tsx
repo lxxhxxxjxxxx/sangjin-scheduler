@@ -14,7 +14,7 @@ function getDateString(date: Date = new Date()): string {
 
 export default function HomeScreen() {
   const { user, logout } = useAuth();
-  const { balance, todaySummary, loading, addActivity } = useActivities();
+  const { balance, todaySummary, loading, addActivity, pendingCount } = useActivities();
   const {
     getTodaySchedules,
     getScheduleStatus,
@@ -186,6 +186,19 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {/* 미승인 활동 알림 */}
+      {pendingCount > 0 && (
+        <View style={styles.pendingCard}>
+          <Text style={styles.pendingEmoji}>⏳</Text>
+          <View style={styles.pendingInfo}>
+            <Text style={styles.pendingTitle}>승인 대기 중</Text>
+            <Text style={styles.pendingSubtitle}>
+              {pendingCount}개의 활동이 부모님 확인을 기다리고 있어요
+            </Text>
+          </View>
+        </View>
+      )}
+
       {/* 가족 코드 카드 */}
       {user?.familyCode && (
         <View style={styles.familyCodeCard}>
@@ -340,6 +353,9 @@ export default function HomeScreen() {
             const isEarn = activity.type === 'earn';
             const isSpend = activity.type === 'spend';
             const isPenalty = activity.type === 'penalty';
+            const isPending = activity.needsApproval && activity.status === 'pending';
+            const isApproved = activity.needsApproval && activity.status === 'approved';
+            const isRejected = activity.needsApproval && activity.status === 'rejected';
 
             return (
               <View
@@ -365,6 +381,18 @@ export default function HomeScreen() {
                     <Text style={styles.activityTime}>
                       {activity.startTime} - {activity.endTime}
                     </Text>
+                  )}
+                  {activity.needsApproval && (
+                    <View style={[
+                      styles.approvalBadge,
+                      isPending && styles.approvalBadgePending,
+                      isApproved && styles.approvalBadgeApproved,
+                      isRejected && styles.approvalBadgeRejected,
+                    ]}>
+                      <Text style={styles.approvalBadgeText}>
+                        {isPending ? '⏳ 승인 대기' : isApproved ? '✅ 승인됨' : '❌ 거절됨'}
+                      </Text>
+                    </View>
                   )}
                 </View>
                 <View style={[
@@ -663,6 +691,27 @@ const styles = StyleSheet.create({
     color: COLORS.textLight,
     marginTop: 2,
   },
+  approvalBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 2,
+    borderRadius: BORDER_RADIUS.full,
+    marginTop: 4,
+  },
+  approvalBadgePending: {
+    backgroundColor: COLORS.gold,
+  },
+  approvalBadgeApproved: {
+    backgroundColor: COLORS.earn,
+  },
+  approvalBadgeRejected: {
+    backgroundColor: COLORS.penalty,
+  },
+  approvalBadgeText: {
+    fontSize: 10,
+    color: COLORS.textWhite,
+    fontWeight: '600',
+  },
   activityBadge: {
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.xs,
@@ -719,6 +768,35 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.sm,
     color: COLORS.goldDark,
     fontWeight: '600',
+  },
+
+  // 미승인 알림 카드
+  pendingCard: {
+    backgroundColor: COLORS.goldLight,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    ...SHADOWS.small,
+  },
+  pendingEmoji: {
+    fontSize: 32,
+    marginRight: SPACING.md,
+  },
+  pendingInfo: {
+    flex: 1,
+  },
+  pendingTitle: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: 'bold',
+    color: COLORS.goldDark,
+  },
+  pendingSubtitle: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.goldDark,
+    marginTop: 2,
   },
 
   // 가족 코드 카드

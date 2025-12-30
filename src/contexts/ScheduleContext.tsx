@@ -121,11 +121,19 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
     // 마이그레이션 시도
     migrateFromAsyncStorage();
 
-    // 스케줄 데이터 구독
+    // 스케줄 데이터 구독 (가족 코드로 쿼리 - 부모/학생 모두 같은 스케줄 공유)
     const schedulesRef = collection(db, 'schedules');
+    const familyCodeToQuery = user.role === 'parent' ? user.linkedFamilyCode : user.familyCode;
+
+    if (!familyCodeToQuery) {
+      setSchedules([]);
+      setIsLoading(false);
+      return;
+    }
+
     const schedulesQuery = query(
       schedulesRef,
-      where('userId', '==', user.id),
+      where('familyCode', '==', familyCodeToQuery),
       orderBy('createdAt', 'desc')
     );
 
@@ -155,11 +163,11 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
     });
 
-    // 일일 상태 데이터 구독
+    // 일일 상태 데이터 구독 (가족 코드로 쿼리)
     const statusesRef = collection(db, 'scheduleStatuses');
     const statusesQuery = query(
       statusesRef,
-      where('userId', '==', user.id)
+      where('familyCode', '==', familyCodeToQuery)
     );
 
     const unsubStatuses = onSnapshot(statusesQuery, (snapshot) => {
@@ -188,10 +196,13 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   async function addSchedule(schedule: Omit<Schedule, 'id' | 'createdAt' | 'userId' | 'familyCode'>) {
     if (!user) throw new Error('로그인이 필요합니다');
 
+    // 부모는 linkedFamilyCode, 학생은 familyCode 사용
+    const familyCodeToUse = user.role === 'parent' ? user.linkedFamilyCode : user.familyCode;
+
     const newScheduleData = {
       ...schedule,
       userId: user.id,
-      familyCode: user.familyCode || null,
+      familyCode: familyCodeToUse || null,
       createdAt: new Date(),
     };
 
@@ -243,11 +254,13 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   async function markScheduleCompleted(scheduleId: string, date: string, activityId: string) {
     if (!user) throw new Error('로그인이 필요합니다');
 
-    const statusId = `${user.id}_${scheduleId}_${date}`;
+    const familyCodeToUse = user.role === 'parent' ? user.linkedFamilyCode : user.familyCode;
+    const statusId = `${familyCodeToUse}_${scheduleId}_${date}`;
     const statusRef = doc(db, 'scheduleStatuses', statusId);
 
     await setDoc(statusRef, {
       userId: user.id,
+      familyCode: familyCodeToUse,
       scheduleId,
       date,
       status: 'completed',
@@ -259,11 +272,13 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   async function markScheduleAbsent(scheduleId: string, date: string) {
     if (!user) throw new Error('로그인이 필요합니다');
 
-    const statusId = `${user.id}_${scheduleId}_${date}`;
+    const familyCodeToUse = user.role === 'parent' ? user.linkedFamilyCode : user.familyCode;
+    const statusId = `${familyCodeToUse}_${scheduleId}_${date}`;
     const statusRef = doc(db, 'scheduleStatuses', statusId);
 
     await setDoc(statusRef, {
       userId: user.id,
+      familyCode: familyCodeToUse,
       scheduleId,
       date,
       status: 'absent',
@@ -275,7 +290,8 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   async function resetScheduleStatus(scheduleId: string, date: string) {
     if (!user) throw new Error('로그인이 필요합니다');
 
-    const statusId = `${user.id}_${scheduleId}_${date}`;
+    const familyCodeToUse = user.role === 'parent' ? user.linkedFamilyCode : user.familyCode;
+    const statusId = `${familyCodeToUse}_${scheduleId}_${date}`;
     await deleteDoc(doc(db, 'scheduleStatuses', statusId));
   }
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TextInput,
   Alert,
   Platform,
+  AppState,
 } from 'react-native';
 import { useActivities } from '../../contexts/ActivityContext';
 import { useSchedules } from '../../contexts/ScheduleContext';
@@ -60,6 +61,13 @@ export default function RecordScreen() {
   // 과목 선택 상태
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
 
+  // 타이머 관련 상태
+  const [isTimerMode, setIsTimerMode] = useState(false);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timerStartTime, setTimerStartTime] = useState<Date | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // 학원/과외 스케줄 필터링 (활성화된 것만)
   const academySchedules = useMemo(() => {
     return schedules.filter(s => s.isActive && s.category === 'academy');
@@ -104,6 +112,116 @@ export default function RecordScreen() {
     };
   }, []);
 
+  // 시작/종료 시간 변경 시 자동으로 총 시간 계산
+  useEffect(() => {
+    const sh = parseInt(startHour);
+    const sm = parseInt(startMinute) || 0;
+    const eh = parseInt(endHour);
+    const em = parseInt(endMinute) || 0;
+
+    // 시작 시간과 종료 시간 모두 입력된 경우에만 계산
+    if (!isNaN(sh) && !isNaN(eh) && startHour !== '' && endHour !== '') {
+      const startTotalMinutes = sh * 60 + sm;
+      const endTotalMinutes = eh * 60 + em;
+
+      let durationMinutes = endTotalMinutes - startTotalMinutes;
+
+      // 자정을 넘기는 경우 (예: 23:00 ~ 01:00)
+      if (durationMinutes < 0) {
+        durationMinutes += 24 * 60;
+      }
+
+      if (durationMinutes > 0) {
+        const calculatedHours = Math.floor(durationMinutes / 60);
+        const calculatedMinutes = durationMinutes % 60;
+        setHours(calculatedHours.toString());
+        setMinutes(calculatedMinutes.toString());
+      }
+    }
+  }, [startHour, startMinute, endHour, endMinute]);
+
+  // 타이머 인터벌 관리
+  useEffect(() => {
+    if (isTimerRunning && timerStartTime) {
+      timerIntervalRef.current = setInterval(() => {
+        const now = new Date();
+        const diffSeconds = Math.floor((now.getTime() - timerStartTime.getTime()) / 1000);
+        setElapsedSeconds(diffSeconds);
+      }, 1000);
+    } else {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, [isTimerRunning, timerStartTime]);
+
+  // 앱이 백그라운드에서 돌아왔을 때 시간 재계산
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && isTimerRunning && timerStartTime) {
+        const now = new Date();
+        const diffSeconds = Math.floor((now.getTime() - timerStartTime.getTime()) / 1000);
+        setElapsedSeconds(diffSeconds);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isTimerRunning, timerStartTime]);
+
+  // 타이머 시작
+  function startTimer() {
+    const now = new Date();
+    setTimerStartTime(now);
+    setElapsedSeconds(0);
+    setIsTimerRunning(true);
+    setSelectedDate('today'); // 타이머 시작 시 오늘로 고정
+  }
+
+  // 타이머 정지 및 시간 자동 입력
+  function stopTimer() {
+    if (!timerStartTime) return;
+
+    setIsTimerRunning(false);
+    const endTime = new Date();
+
+    // 시작/종료 시간 자동 입력
+    setStartHour(timerStartTime.getHours().toString());
+    setStartMinute(timerStartTime.getMinutes().toString());
+    setEndHour(endTime.getHours().toString());
+    setEndMinute(endTime.getMinutes().toString());
+
+    // 총 시간 계산
+    const totalMinutes = Math.floor(elapsedSeconds / 60);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    setHours(h.toString());
+    setMinutes(m.toString());
+  }
+
+  // 타이머 초기화
+  function resetTimer() {
+    setIsTimerRunning(false);
+    setTimerStartTime(null);
+    setElapsedSeconds(0);
+  }
+
+  // 경과 시간 포맷팅 (HH:MM:SS)
+  function formatElapsedTime(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+
   const activities = {
     earn: EARN_ACTIVITIES,
     spend: SPEND_ACTIVITIES,
@@ -131,6 +249,8 @@ export default function RecordScreen() {
     setShowScheduleMode(false);
     // 과목 초기화
     setSelectedSubject(null);
+    // 타이머 초기화
+    resetTimer();
     // 날짜는 초기화하지 않음 (사용자 편의)
   }
 
@@ -352,7 +472,81 @@ export default function RecordScreen() {
         <Text style={styles.balanceValue}>{minutesToTimeString(balance)}</Text>
       </View>
 
-      {/* 날짜 선택 (스케줄 모드가 아닐 때만) */}
+      {/* 타이머 모드 토글 */}
+      <View style={styles.timerToggleContainer}>
+        <TouchableOpacity
+          style={[styles.timerToggle, isTimerMode && styles.timerToggleActive]}
+          onPress={() => {
+            if (isTimerRunning) {
+              showAlert('타이머 실행 중', '타이머를 먼저 정지해주세요');
+              return;
+            }
+            setIsTimerMode(!isTimerMode);
+            if (!isTimerMode) {
+              resetTimer();
+            }
+          }}
+        >
+          <Text style={styles.timerToggleEmoji}>⏱️</Text>
+          <Text style={[styles.timerToggleText, isTimerMode && styles.timerToggleTextActive]}>
+            타이머 모드 {isTimerMode ? 'ON' : 'OFF'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 타이머 디스플레이 */}
+      {isTimerMode && (
+        <View style={styles.timerCard}>
+          <Text style={styles.timerTitle}>
+            {isTimerRunning ? '⏱️ 측정 중...' : timerStartTime ? '⏹️ 측정 완료!' : '⏱️ 타이머'}
+          </Text>
+
+          <View style={styles.timerDisplay}>
+            <Text style={[styles.timerTime, isTimerRunning && styles.timerTimeRunning]}>
+              {formatElapsedTime(elapsedSeconds)}
+            </Text>
+            {elapsedSeconds > 0 && (
+              <Text style={styles.timerMinutes}>
+                ({Math.floor(elapsedSeconds / 60)}분 {elapsedSeconds % 60}초)
+              </Text>
+            )}
+          </View>
+
+          {timerStartTime && (
+            <Text style={styles.timerStartInfo}>
+              시작: {timerStartTime.getHours().toString().padStart(2, '0')}:
+              {timerStartTime.getMinutes().toString().padStart(2, '0')}
+            </Text>
+          )}
+
+          <View style={styles.timerButtons}>
+            {!isTimerRunning && !timerStartTime && (
+              <TouchableOpacity style={styles.timerStartButton} onPress={startTimer}>
+                <Text style={styles.timerButtonText}>▶️ 시작</Text>
+              </TouchableOpacity>
+            )}
+            {isTimerRunning && (
+              <TouchableOpacity style={styles.timerStopButton} onPress={stopTimer}>
+                <Text style={styles.timerButtonText}>⏹️ 정지</Text>
+              </TouchableOpacity>
+            )}
+            {!isTimerRunning && timerStartTime && (
+              <>
+                <TouchableOpacity style={styles.timerResetButton} onPress={resetTimer}>
+                  <Text style={styles.timerResetButtonText}>🔄 다시</Text>
+                </TouchableOpacity>
+                <View style={styles.timerCompleteHint}>
+                  <Text style={styles.timerCompleteHintText}>
+                    ✅ 아래에서 활동을 선택하고 기록하세요!
+                  </Text>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* 날짜 선택 (스케줄 모드가 아닐 때만, 타이머 실행 중이 아닐 때만) */}
       {!showScheduleMode && (
         <View style={styles.dateSelector}>
           <Text style={styles.dateSelectorLabel}>📅 기록할 날짜</Text>
@@ -487,34 +681,47 @@ export default function RecordScreen() {
       {showScheduleMode && selectedSchedule && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>📆 기록할 요일 선택</Text>
-          <Text style={styles.sectionSubtitle}>여러 요일을 선택하면 한번에 기록돼요!</Text>
+          <Text style={styles.sectionSubtitle}>오늘 이전 날짜만 기록할 수 있어요</Text>
           <View style={styles.dayGrid}>
             {selectedSchedule.daysOfWeek.map((day) => {
               const isSelected = selectedDays.includes(day);
               const dateForDay = getDateForDayOfWeek(day);
               const dateStr = `${dateForDay.getMonth() + 1}/${dateForDay.getDate()}`;
+
+              // 오늘 날짜와 비교 (오늘까지만 선택 가능)
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const compareDate = new Date(dateForDay);
+              compareDate.setHours(0, 0, 0, 0);
+              const isFuture = compareDate > today;
+
               return (
                 <TouchableOpacity
                   key={day}
                   style={[
                     styles.dayButton,
                     isSelected && styles.dayButtonSelected,
+                    isFuture && styles.dayButtonDisabled,
                   ]}
-                  onPress={() => toggleDay(day)}
+                  onPress={() => !isFuture && toggleDay(day)}
+                  disabled={isFuture}
                 >
                   <Text style={[
                     styles.dayButtonText,
                     isSelected && styles.dayButtonTextSelected,
+                    isFuture && styles.dayButtonTextDisabled,
                   ]}>
                     {DAY_NAMES[day]}
                   </Text>
                   <Text style={[
                     styles.dayButtonDate,
                     isSelected && styles.dayButtonDateSelected,
+                    isFuture && styles.dayButtonTextDisabled,
                   ]}>
                     {dateStr}
                   </Text>
-                  {isSelected && <Text style={styles.dayCheck}>✓</Text>}
+                  {isFuture && <Text style={styles.futureHint}>미래</Text>}
+                  {isSelected && !isFuture && <Text style={styles.dayCheck}>✓</Text>}
                 </TouchableOpacity>
               );
             })}
@@ -595,6 +802,7 @@ export default function RecordScreen() {
             </View>
           </View>
 
+          <Text style={styles.autoCalcHint}>💡 시작/종료 시간 입력 시 자동 계산</Text>
           <View style={styles.periodContainer}>
             <View style={styles.periodGroup}>
               <Text style={styles.periodLabel}>시작 시간</Text>
@@ -777,6 +985,127 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.lg,
     color: COLORS.goldDark,
     fontWeight: 'bold',
+  },
+
+  // 타이머 토글
+  timerToggleContainer: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+  },
+  timerToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.card,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    ...SHADOWS.small,
+  },
+  timerToggleActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: `${COLORS.primary}10`,
+  },
+  timerToggleEmoji: {
+    fontSize: 20,
+    marginRight: SPACING.sm,
+  },
+  timerToggleText: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  timerToggleTextActive: {
+    color: COLORS.primary,
+  },
+
+  // 타이머 카드
+  timerCard: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+    padding: SPACING.lg,
+    borderRadius: BORDER_RADIUS.xl,
+    alignItems: 'center',
+    ...SHADOWS.medium,
+  },
+  timerTitle: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.md,
+  },
+  timerDisplay: {
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+  },
+  timerTime: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: COLORS.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  timerTimeRunning: {
+    color: COLORS.earn,
+  },
+  timerMinutes: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    marginTop: SPACING.xs,
+  },
+  timerStartInfo: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textLight,
+    marginBottom: SPACING.md,
+  },
+  timerButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: SPACING.md,
+  },
+  timerStartButton: {
+    backgroundColor: COLORS.earn,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.full,
+    ...SHADOWS.small,
+  },
+  timerStopButton: {
+    backgroundColor: COLORS.spend,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.full,
+    ...SHADOWS.small,
+  },
+  timerResetButton: {
+    backgroundColor: COLORS.cardAlt,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.full,
+  },
+  timerResetButtonText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  timerButtonText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textWhite,
+    fontWeight: 'bold',
+  },
+  timerCompleteHint: {
+    width: '100%',
+    backgroundColor: `${COLORS.earn}15`,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    marginTop: SPACING.sm,
+  },
+  timerCompleteHintText: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.earn,
+    textAlign: 'center',
+    fontWeight: '600',
   },
 
   // 날짜 선택
@@ -1012,6 +1341,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 2,
   },
+  dayButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: COLORS.cardAlt,
+  },
+  dayButtonTextDisabled: {
+    color: COLORS.textLight,
+  },
+  futureHint: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textLight,
+    marginTop: 2,
+  },
   selectedDaysSummary: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1132,11 +1473,18 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginBottom: SPACING.lg,
   },
+  autoCalcHint: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.primary,
+    textAlign: 'center',
+    marginTop: SPACING.lg,
+    marginBottom: SPACING.xs,
+  },
   periodContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: SPACING.lg,
+    marginTop: SPACING.sm,
     gap: SPACING.md,
   },
   periodGroup: {

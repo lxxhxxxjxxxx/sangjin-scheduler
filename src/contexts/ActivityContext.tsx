@@ -20,6 +20,7 @@ interface ActivityContextType {
   activities: Activity[];
   balance: number;
   todaySummary: DailySummary | null;
+  pendingCount: number;
   addActivity: (activity: Omit<Activity, 'id' | 'createdAt' | 'userId' | 'familyCode'>) => Promise<Activity>;
   deleteActivity: (id: string) => Promise<void>;
   getActivitiesByDate: (date: string) => Activity[];
@@ -234,12 +235,16 @@ export function ActivityProvider({ children }: { children: ReactNode }) {
   // 오늘 요약
   const todaySummary = getDailySummary(getTodayString());
 
+  // 미승인 활동 수
+  const pendingCount = activities.filter((a) => a.status === 'pending').length;
+
   return (
     <ActivityContext.Provider
       value={{
         activities,
         balance,
         todaySummary,
+        pendingCount,
         addActivity,
         deleteActivity,
         getActivitiesByDate,
